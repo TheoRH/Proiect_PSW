@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import zscore
 from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
 
 st.markdown(
     """
@@ -23,12 +24,12 @@ section = st.sidebar.radio("Navigați la:",
 # Citire și conversie corectă pentru compatibilitate completă
 df = pd.read_csv('data/Samsung.csv')
 df['Date'] = pd.to_datetime(df['Date']).dt.date #citirea coloanei cauzeaza o problema de conversie
-
+df_final = df.copy()
 
 if section == 'Proiect':
     st.markdown('<h1 class="titlu">Proiect PSW</h1>', unsafe_allow_html=True)
 
-    sub_section = st.sidebar.radio("Secțiuni din proiect", ["Prezentare date", "Filtrări pe baza datelor", "Tratarea valorilor lipsă și a valorilor extreme", "Metode de codificare a datelor" ])
+    sub_section = st.sidebar.radio("Secțiuni din proiect", ["Prezentare date", "Filtrări pe baza datelor", "Tratarea valorilor lipsă și a valorilor extreme", "Metode de codificare a datelor", "Metode de scalare a datelor", "Prelucrari statistice și agregare" ])
 
     if sub_section == "Prezentare date":
         st.markdown('## Prezentare date')
@@ -171,7 +172,7 @@ if section == 'Proiect':
             st.markdown("##### Rândurile eliminate:")
             st.dataframe(df_extreme)
         else:
-            df_final = df_tratat.copy()
+
             df_final_numeric = df_final.select_dtypes(include=[np.number])
             mediane = df_final_numeric.median()
 
@@ -244,8 +245,6 @@ if section == 'Proiect':
                 .reset_index(name="Număr apariții")
             )
 
-
-
         else:
 
             df_encoding_ohe = pd.get_dummies(df_encoding.copy(), columns=["Anotimp"])
@@ -265,10 +264,115 @@ if section == 'Proiect':
             st.markdown("Fiecare rând are o coloană activă corespunzătoare anotimpului său:")
             cols_ohe = [col for col in df_encoding_ohe.columns if col.startswith("Anotimp_")]
             df_sample = df_encoding_ohe[["Date"] + cols_ohe].sample(10).reset_index(drop=True)
-            # Tabel 1: Cu checkbox-uri (default streamlit)
-
             st.dataframe(df_sample)
 
+    elif sub_section == "Metode de scalare a datelor":
+        st.markdown('## Scalarea datelor numerice')
+
+        st.markdown("### Alege coloanele pe care vrei să le scalezi:")
+
+        df_numeric = df_final.select_dtypes(include=[np.number])
+        coloane_scalare = st.multiselect("Coloane disponibile:", df_numeric.columns.tolist(),
+                                         default=df_numeric.columns.tolist())
+
+        st.markdown("### Alege metoda de scalare:")
+        metoda_scalare = st.radio("Metodă:", ["Min-Max", "Standard (Z-score)", "Robust"])
+
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
+
+        scaler = None
+        if metoda_scalare == "Min-Max":
+            scaler = MinMaxScaler()
+        elif metoda_scalare == "Standard (Z-score)":
+            scaler = StandardScaler()
+        else:
+            scaler = RobustScaler()
+
+        st.markdown("""
+        **ℹ️ Descriere metode de scalare:**
+
+        - **Min-Max Scaling** → aduce valorile în intervalul `[0, 1]`  
+        - **Standard Scaling** → transformă valorile ca Z-score (medie = 0, deviație standard = 1)  
+        - **Robust Scaling** → folosește mediană și IQR (ideal pentru date cu outlieri)
+        """)
+        df_scaled = df_final.copy()
+        df_scaled_values = scaler.fit_transform(df_numeric[coloane_scalare])
+        df_scaled_result = pd.DataFrame(df_scaled_values, columns=[f"{col}_scaled" for col in coloane_scalare])
+
+        # Adăugăm rezultatul scalat la un nou DataFrame de afișat
+        df_scalare_viz = pd.concat([df_numeric[coloane_scalare].head(10).reset_index(drop=True),
+                                    df_scaled_result.head(10)], axis=1)
+
+        st.markdown("### Comparație între valorile originale și scalate (primele 10 rânduri):")
+        st.dataframe(df_scalare_viz.style.format(precision=3))
+
+    elif sub_section == "Prelucrari statistice și agregare":
+        st.markdown("## 📊 Prelucrări statistice, grupare și agregare")
+
+        df_stats = df_final.copy()
+        df_stats["Luna"] = pd.to_datetime(df_stats["Date"]).dt.month
+
+        # Grupare după: Luna sau Anotimp (dacă există)
+        optiuni_grupare = ["Luna"]
+        if "Anotimp" in df_stats.columns:
+            optiuni_grupare.insert(0, "Anotimp")
+
+        grupare = st.selectbox("🔹 Alege coloana pentru grupare:", optiuni_grupare)
+
+        # Alegere coloane numerice
+        coloane_num = df_stats.select_dtypes(include=[np.number]).columns.tolist()
+        coloane_alease = st.multiselect("🔸 Alege coloanele numerice:", coloane_num, default=coloane_num)
+
+        # Alegere funcții de agregare multiple
+        functii_disponibile = ["mean", "sum", "min", "max", "std"]
+        functii_alease = st.multiselect("🔧 Alege funcțiile de agregare:", functii_disponibile, default=["mean"])
+
+        # Aplicare agregare multiplă
+        df_agregat = df_stats.groupby(grupare, as_index=False)[coloane_alease].agg(functii_alease)
+
+        st.markdown(f"### 📋 Tabelul rezultat (cu agregări):")
+        st.dataframe(df_agregat.style.format(precision=2).background_gradient(cmap="Blues", axis=None))
+
+        # Alegere coloană pentru grafic
+        if len(coloane_alease) > 0:
+            col_grafic = st.selectbox("📈 Alege o coloană pentru grafic:", coloane_alease)
+
+            # Dacă avem agregare multiplă, alegem și funcția
+            if len(functii_alease) > 1:
+                functie_grafic = st.selectbox("📊 Alege funcția pentru grafic:", functii_alease)
+            else:
+                functie_grafic = functii_alease[0]
+
+            tip_grafic = st.radio("🔍 Tip grafic:", ["Bar Chart", "Line Chart"], horizontal=True)
+
+            x_vals = df_agregat[grupare]
+
+            # Obținem valorile Y în funcție de structura coloanelor
+            try:
+                if isinstance(df_agregat.columns, pd.MultiIndex):
+                    y_vals = df_agregat[(col_grafic, functie_grafic)]
+                    titlu = f"{functie_grafic.capitalize()} pentru '{col_grafic}' după {grupare}"
+                else:
+                    y_vals = df_agregat[col_grafic]
+                    titlu = f"{functie_grafic.capitalize()} pentru '{col_grafic}' după {grupare}"
+
+                # Desenăm graficul
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots()
+                ax.set_title(titlu)
+                ax.set_xlabel(grupare)
+                ax.set_ylabel(f"{col_grafic} ({functie_grafic})")
+
+                if tip_grafic == "Bar Chart":
+                    ax.bar(x_vals, y_vals)
+                else:
+                    ax.plot(x_vals, y_vals, marker='o')
+
+                st.pyplot(fig)
+
+            except Exception as e:
+                st.warning(f"⚠️ Nu s-a putut genera graficul: {e}")
 
 
 
