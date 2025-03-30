@@ -18,7 +18,7 @@ st.markdown(
 section = st.sidebar.radio("Navigați la:",
                            ["Proiect", "Informații"])
 
-#Citire set de date
+# Citire și conversie corectă pentru compatibilitate completă
 df = pd.read_csv('data/Samsung.csv')
 df['Date'] = pd.to_datetime(df['Date']).dt.date #citirea coloanei cauzeaza o problema de conversie
 
@@ -35,7 +35,7 @@ if section == 'Proiect':
 
         st.markdown('#### Descrierea setului de date')
         st.markdown('##### Setul de date furnizează informații cu privire la evoluția zilnică a prețului acțiunilor Samsung Electronics.')
-        st.markdown('##### Prețurile sunt exprimate în KRW (won sub-coreean).')
+        st.markdown('##### Prețurile sunt exprimate în KRW (won sud-coreean).')
         st.info("**`Date`** → Data sesiunii de tranzacționare.")
         st.info("**`Open`** → Prețul acțiunilor la începutul sesiunii (preț de deschidere).")
         st.info("**`High`** → Cel mai mare preț atins de acțiuni în timpul sesiunii.")
@@ -45,7 +45,7 @@ if section == 'Proiect':
         st.info("**`Volume`** → Număr total de acțiuni tranzacționate.")
         st.markdown('##### Informații despre setul de date.')
         st.write('Tipuri de date:')
-        st.write(df.dtypes)
+        st.write({col: str(dtype) for col, dtype in df.dtypes.items()}) #reparat eroare principala
         st.write(f"Dimensiunea setului de date: setul conține {df.shape[0]} rânduri și {df.shape[1]} coloane")
         st.markdown('##### Statistica descriptivă a setului de date.')
         st.dataframe(df.describe())
@@ -92,8 +92,6 @@ if section == 'Proiect':
             df_filtrat3 =df_filtrat3[(df['Date'] >= start_data) & (df['Date'] <= end_data)]
             st.dataframe(df_filtrat3)
 
-
-
 elif section == 'Informații':
     st.markdown("""
     ## 📂 Date utilizate în proiect
@@ -106,7 +104,3 @@ elif section == 'Informații':
     👨‍💻 **Raicea David-Gabriel**  
     👨‍💻 **Rădulescu Theodor**  
     """)
-
-
-
-
