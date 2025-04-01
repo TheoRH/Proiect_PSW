@@ -420,11 +420,14 @@ if section == 'Proiect':
         df_numeric = df_final.select_dtypes(include=[np.number])
         st.markdown("### Alege coloanele pe care vrei să le scalezi:")
 
+        coloane_disponibile = [col for col in df_numeric.columns if col != "Luna"]
+
         coloane_scalare = st.multiselect(
             "Coloane disponibile:",
-            df_numeric.columns.tolist(),
-            default=df_numeric.columns.tolist()
+            coloane_disponibile,
+            default=coloane_disponibile
         )
+
 
         st.markdown("### Alege metoda de scalare:")
         metoda_scalare = st.radio("Metodă:", ["Min-Max", "Standard (Z-score)", "Robust"])
