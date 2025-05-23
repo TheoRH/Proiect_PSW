@@ -5,6 +5,18 @@ from scipy.stats import zscore
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler, RobustScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
+import geopandas as gpd
+import osmnx as ox
+import os
+from pathlib import Path
+import folium
+from folium.features import GeoJsonTooltip,GeoJson
+from streamlit_folium import st_folium
+from shapely.geometry import Point
+import contextily
+from shapely.ops import nearest_points
+from geopy.distance import geodesic
+
 
 st.markdown(
     """
@@ -22,8 +34,42 @@ st.markdown(
 section = st.sidebar.radio("Navigați la:",
                            ["Proiect", "Informații"])
 
+
+
+# Încărcare hartă mondială
+def load_or_save_gis(name: str, url: str, folder="data/maps") -> gpd.GeoDataFrame:
+    os.makedirs(folder, exist_ok=True)
+    shp_path = Path(folder) / f"{name}.shp"
+    if shp_path.exists():
+        return gpd.read_file(shp_path)
+
+    gdf = gpd.read_file(url)
+    gdf.to_file(shp_path, driver="ESRI Shapefile")
+    return gdf
+
+def load_or_save_rivers(name: str,folder="data/maps"):
+    os.makedirs(folder, exist_ok=True)
+    shp_path = Path(folder) / f"{name}_rivers.shp"
+    if shp_path.exists():
+        return gpd.read_file(shp_path)
+    r = ox.features_from_place(f"{name}", {"waterway": "river"})
+    r.to_file(shp_path, driver="ESRI Shapefile")
+    return r
+
+#Definirea hartilor:
+world = load_or_save_gis("world_boundary",
+
+                                 "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip")
+
+cities = load_or_save_gis("cities_detailed",
+                                  "https://naciscdn.org/naturalearth/10m/cultural/ne_10m_populated_places.zip")
+
+
 # Citire și conversie corectă pentru compatibilitate completă
 df = pd.read_csv('data/Samsung.csv')
+df_phones = pd.read_csv('data/PhoneBrandsWorld.csv', sep=';')
+df_phones.columns = df_phones.columns.str.strip()
+
 df['Date'] = pd.to_datetime(df['Date']).dt.date
 df_final = df.copy()
 df_scaled_model = df.copy()
@@ -60,7 +106,9 @@ df_scaled_model[[f"{col}_scaled" for col in df_final.select_dtypes(include=[np.n
 if section == 'Proiect':
     st.markdown('<h1 class="titlu">Proiect PSW</h1>', unsafe_allow_html=True)
 
-    sub_section = st.sidebar.radio("Secțiuni din proiect", ["Prezentare date", "Filtrări pe baza datelor", "Tratarea valorilor lipsă și a valorilor extreme", "Metode de codificare a datelor", "Analiza corelațiilor","Metode de scalare a datelor", "Prelucrari statistice și agregare" ])
+    sub_section = st.sidebar.radio("Secțiuni din proiect", ["Prezentare date", "Filtrări pe baza datelor", "Tratarea valorilor lipsă și a valorilor extreme", "Metode de codificare a datelor", "Analiza corelațiilor","Metode de scalare a datelor", "Prelucrari statistice și agregare"
+                                                            ,"Harta interactiva a distributiei globale a brandurilor de telefoane", "Harta râurilor din Coreea de Sud",
+                                                            "Vecinii Coreei de Sud", "Analiza oraselor Coreei de Sud", "GDP Asia"])
 
     if sub_section == "Prezentare date":
         st.markdown('## Prezentare date')
@@ -561,6 +609,474 @@ if section == 'Proiect':
             ax2.set_ylabel(col_box)
             ax2.set_xlabel(grupare)
             st.pyplot(fig2)
+
+
+
+
+    elif sub_section == "Harta interactiva a distributiei globale a brandurilor de telefoane":
+
+        st.markdown("## Branduri dominante de telefoane pe glob")
+
+        tema_harta = st.selectbox("Alege stilul hărții", ["Light", "Dark"], index=0)
+
+        # Conversie text la float și apoi la text cu %
+        for col in ['#1 Market Share', '#2 Market Share', '#3 Market Share']:
+            df_phones[col] = df_phones[col].str.replace('%', '').astype(float)
+            df_phones[f"{col} (%)"] = df_phones[col].apply(lambda x: f"{x:.2f}%")
+
+        world = load_or_save_gis("world_boundary",
+                                 "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip")
+
+        df_phones.columns = df_phones.columns.str.strip().str.replace('\ufeff', '')
+        df_merged = world.merge(df_phones, left_on="ADMIN", right_on="Country", how="inner")
+
+        # Mapare culori pentru branduri
+        color_map = {
+            "Apple": "#5C6BC0", "Samsung": "#26A69A", "Xiaomi": "#FFD700", "Google": "#8BC34A",
+            "Huawei": "#FF8A65", "Motorola": "#90A4AE", "Oppo": "#EC407A", "Vivo": "#4DD0E1",
+            "Tecno": "#7E57C2", "Infinix": "#A1887F", "LG": "#E57373", "itel": "#BCAAA4", "Unknown": "#FFA726"
+        }
+
+        df_merged["color"] = df_merged["#1 Brand"].map(color_map).fillna("#E0E0E0")
+
+        # Alegere stil hartă și contrast
+        tile_style = "cartodbpositron" if tema_harta == "Light" else "cartodbdark_matter"
+        tooltip_bg = "white" if tema_harta == "Light" else "#1c1c1c"
+        tooltip_text = "#222" if tema_harta == "Light" else "#EEE"
+        tooltip_shadow = "rgba(0,0,0,0.2)" if tema_harta == "Light" else "rgba(255,255,255,0.1)"
+
+        # Legendă afișată deasupra hărții
+        st.markdown("### Legendă branduri dominante")
+        cols = st.columns(4)  # Împarte pe 4 coloane pentru afișare compactă
+
+        for i, (brand, color) in enumerate(color_map.items()):
+            with cols[i % 4]:
+                st.markdown(f"<div style='display: flex; align-items: center;'>"
+                            f"<div style='width: 14px; height: 14px; background-color: {color}; "
+                            f"margin-right: 6px; border: 1px solid #aaa; display: inline-block;'></div>"
+                            f"<span style='font-size: 13px;'>{brand}</span></div>",
+                            unsafe_allow_html=True)
+
+        # Inițializare hartă
+        m = folium.Map(location=[15, 0], zoom_start=2, tiles=tile_style)
+
+        folium.GeoJson(
+            data=df_merged,
+            name="Țări",
+            style_function=lambda x: {
+                "fillColor": x["properties"]["color"],
+                "color": "#444",
+                "weight": 1.2,
+                "fillOpacity": 0.9,
+            },
+            highlight_function=lambda x: {
+                "color": "black",
+                "weight": 2.5,
+                "fillOpacity": 0.95,
+            },
+            tooltip=GeoJsonTooltip(
+                fields=["ADMIN", "#1 Brand", "#1 Market Share (%)", "#2 Brand", "#2 Market Share (%)", "#3 Brand",
+                        "#3 Market Share (%)"],
+                aliases=["Țară", "Brand #1", "Cota #1", "Brand #2", "Cota #2", "Brand #3", "Cota #3"],
+                sticky=True,
+                style=(
+                    f"background-color: {tooltip_bg}; "
+                    f"color: {tooltip_text}; "
+                    f"font-family: Arial; "
+                    f"font-size: 13px; "
+                    f"padding: 10px; "
+                    f"box-shadow: 2px 2px 6px {tooltip_shadow};"
+                )
+            ),
+            control=False,
+            overlay=True,
+            show=True,
+            interactive=True
+        ).add_to(m)
+
+        # Afișare hartă
+        st_folium(m, use_container_width=True, height=800)
+
+    elif sub_section == "Harta râurilor din Coreea de Sud":
+        # 1. Descarcă contururile țărilor de pe NACIS
+
+
+        cities = cities[cities["SOV0NAME"] == "Korea, South"]
+
+        south_korea = world[world["ADMIN"] == "South Korea"]
+        north_korea = world[world["ADMIN"] == "North Korea"]
+
+        # Găsește vecinii Coreei de Sud
+        vecini = world[world.touches(south_korea.iloc[0].geometry)]
+
+        # Combină doar aceste geometrii
+        combinat = gpd.GeoDataFrame(pd.concat([vecini, south_korea]), crs=world.crs)
+
+        neighbours = vecini.to_crs(epsg=32635)  # pentru afișare pe hartă
+
+        # 2. Descarcă râurile (lake centerlines)
+        rivers =load_or_save_rivers("South Korea")
+
+        # 3. Asigură-te că sunt în același sistem de coordonate
+        rivers = rivers.to_crs(south_korea.crs)
+
+        # 4. Intersecția râurilor cu Coreea de Sud
+        rivers_in_korea = gpd.overlay(rivers, south_korea, how="intersection")
+
+        # 5. Afișează harta
+        fig, ax = plt.subplots(figsize=(10, 10))
+        south_korea.plot(ax=ax, color="lightgrey")
+        rivers_in_korea.plot(ax=ax, color="blue", linewidth=1, label="Rivers")
+        cities.plot(ax=ax, color="red", markersize=20, label="Cities")
+
+        ax.set_title("Râurile din Coreea de Sud", fontsize=14)
+        plt.axis("off")
+        st.pyplot(fig)
+
+        # 1. Ne asigurăm că atât râurile cât și vecinii sunt în același CRS (EPSG:32635)
+        rivers = rivers[['geometry']].copy()
+        rivers = rivers.to_crs(epsg=32635)
+        neighbours = neighbours.to_crs(epsg=32635)
+
+        # 2. Intersecția râurilor cu vecinii Coreei de Sud
+        rivers_crossing = gpd.sjoin(neighbours, rivers, how='inner', predicate='intersects')
+
+        # 3. Grupare: câte râuri intersectează fiecare țară vecină
+        rauri_pe_tari = rivers_crossing.groupby('ADMIN').size().reset_index(name='Număr râuri')
+        rauri_pe_tari.rename(columns={'ADMIN': 'Vecini'}, inplace=True)
+
+        # 4. Afișare în Streamlit
+        st.markdown("### Numărul de râuri care traversează fiecare vecin al Coreei de Sud")
+        st.dataframe(rauri_pe_tari, hide_index=True)
+
+
+        ####RAURILE CARE TRAVERSEAZA TARILE
+        rivers = rivers.to_crs(epsg=32635)
+        neighbours = neighbours.to_crs(epsg=32635)
+        rivers_crossing = gpd.sjoin(neighbours, rivers, how='inner', predicate='intersects')
+
+        # 1. Selectăm doar Coreea de Sud și Coreea de Nord din world
+        sk = world[world["ADMIN"] == "South Korea"]
+        nk = world[world["ADMIN"] == "North Korea"]
+        coreea = gpd.GeoDataFrame(pd.concat([sk, nk]), crs=world.crs)
+
+        # 2. Reproiectăm toate la EPSG:32652 (UTM Coreea)
+        coreea = coreea.to_crs(epsg=32652)
+        rivers = rivers.to_crs(epsg=32652)
+
+        # 3. Păstrăm doar râurile care intersectează Coreea de Sud sau Coreea de Nord
+        rivers_in_coreea = gpd.sjoin(rivers, coreea, how='inner', predicate='intersects')
+
+        # 4. Plot
+        fig, ax = plt.subplots(figsize=(10, 14))  # harta mai mare
+
+        # Harta Coreei
+        coreea.plot(ax=ax, color='lightgray', edgecolor='black', label='Coreea de Sud & Nord')
+
+        # Contur Coreea de Sud și Nord
+        sk.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=2, label='Coreea de Sud')
+        nk.plot(ax=ax, facecolor='none', edgecolor='blue', linewidth=2, label='Coreea de Nord')
+
+        # Râurile
+        rivers_in_coreea.plot(ax=ax, color='darkblue', linewidth=1, label='Râuri')
+
+        # Fixare axă doar pe zona relevantă
+        ax.set_xlim(coreea.total_bounds[0] - 10000, coreea.total_bounds[2] + 10000)
+        ax.set_ylim(coreea.total_bounds[1] - 10000, coreea.total_bounds[3] + 10000)
+
+        # Final
+        plt.title("Râurile din Coreea de Sud și Coreea de Nord")
+        plt.axis('off')
+        st.pyplot(fig)
+
+    elif sub_section == "Vecinii Coreei de Sud":
+
+        # Încarcă și reproiectează vecinii
+
+
+
+
+        # Încarcă și Coreea de Sud
+
+
+        south_korea = world[world["ADMIN"] == "South Korea"]
+
+        # Găsește vecinii Coreei de Sud
+        vecini = world[world.touches(south_korea.iloc[0].geometry)]
+
+        # Combină doar aceste geometrii
+        combinat = gpd.GeoDataFrame(pd.concat([vecini, south_korea]), crs=world.crs)
+
+        neighbours = vecini.to_crs(epsg=32635)  # pentru afișare pe hartă
+
+        neighbours["area_km2"] = neighbours.to_crs(epsg=32652).geometry.area / 1_000_000
+
+        # Use a more appropriate CRS for South Korea (UTM zone 52N)
+
+        south_korea_proj = south_korea.to_crs(epsg=32652)  # UTM zone 52N covers most of South Korea
+
+        south_korea_area = south_korea_proj.geometry.area / 1_000_000
+
+        # For display on the map
+
+        south_korea = south_korea.to_crs(epsg=32635)
+
+        south_korea["area_km2"] = south_korea_area
+
+        # Hartă folium
+
+        m = folium.Map(location=[36.5, 127.5], zoom_start=6)
+
+        # Colorează vecinii
+
+        folium.Choropleth(
+
+            geo_data=neighbours,
+            data=neighbours,
+            columns=["ADMIN", "area_km2"],
+            key_on="feature.properties.ADMIN",
+            legend=False,
+            fill_color="YlGnBu",
+            line_opacity=0.2,
+            fill_opacity=0.7,
+            name="Vecini"
+
+        ).add_to(m)
+
+        # Tooltip pe vecini
+
+        GeoJson(
+            neighbours,
+            tooltip=GeoJsonTooltip(fields=["ADMIN", "area_km2"],
+
+                                   aliases=["Țară", "Suprafață (km²)"],
+
+                                   localize=True)
+
+        ).add_to(m)
+
+        # Colorează Coreea de Sud
+
+        GeoJson(
+
+            south_korea,
+
+            style_function=lambda x: {"fillColor": "orange", "color": "black", "weight": 2, "fillOpacity": 0.6},
+
+            tooltip=GeoJsonTooltip(fields=["ADMIN", "area_km2"],
+
+                                   aliases=["Coreea de Sud", "Suprafață (km²)"],
+
+                                   localize=True)
+
+        ).add_to(m)
+
+        # Titlu și afișare
+
+        st.title("Vecinii Coreei de Sud și Granița cu Coreea de Nord")
+
+        st_folium(m, use_container_width=True, height=600)
+
+        st.markdown("### Calcularea centrilor din Coreea de Sud cu Coreea de Nord")
+
+        south_korea = world[world["ADMIN"] == "South Korea"]
+
+
+
+        # Reproiectează DOAR zona de interes într-un CRS metric
+        combinat_metric = combinat.to_crs(epsg=32652)
+
+        # Calculează centroizii în sistem proiectat
+        combinat_metric["centroid"] = combinat_metric.geometry.centroid
+        centroizi = combinat_metric.set_geometry("centroid")
+        # Reproiectăm înapoi în EPSG:4326 doar pentru afișare, dacă vrei coordonate geografice
+        combinat = combinat_metric.to_crs(epsg=4326)
+        centroizi = centroizi.to_crs(epsg=4326)
+
+        # Plot în matplotlib
+        fig, ax = plt.subplots()
+        combinat.plot(ax=ax, edgecolor="black", facecolor="none")
+        centroizi.plot(ax=ax, color="red", markersize=10)
+        st.pyplot(fig)
+
+        # Coordonatele Seulului
+        seoul_wgs = Point(126.9780, 37.5665)
+
+        # Convertim în EPSG:32652 (Coreea)
+        seoul_utm = gpd.GeoSeries([seoul_wgs], crs="EPSG:4326").to_crs(epsg=32652).iloc[0]
+
+        # Selectăm Coreea de Nord și centroidul ei
+        north_korea = world[world["ADMIN"] == "North Korea"].to_crs(epsg=32652)
+        nk_centroid = north_korea.geometry.centroid.iloc[0]
+
+        # Calculăm distanța
+        dist_km = seoul_utm.distance(nk_centroid) / 1000
+
+        # Creăm tabelul
+        df_dist = pd.DataFrame([{
+            "Oraș": "Seul",
+            "Țintă": "Centru Coreea de Nord",
+            "Distanță (km)": round(dist_km, 2)
+        }])
+
+        # Afișăm tabelul
+        st.markdown("### Distanța Seul – Coreea de Nord")
+        st.dataframe(df_dist,hide_index=True)
+
+        # Creează figura și axa
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plotează cu coloană "name" (sau "ADMIN", în funcție de ce ai)
+        combinat.plot(column='ADMIN', edgecolor='black', legend=True, ax=ax)
+
+        # Afișează în Streamlit
+        st.pyplot(fig)
+
+        #Afisare vecini
+        df_vecini = pd.DataFrame(vecini["ADMIN"].values, columns=["Vecini"])
+
+        # Afișăm fără index
+        st.markdown("### Țările vecine Coreei de Sud")
+        st.dataframe(df_vecini, hide_index=True)
+
+        # 1. Creează punctul Seul în WGS84
+        seoul = gpd.GeoDataFrame(
+            {'name': ['Seoul']},
+            geometry=[Point(126.9780, 37.5665)],
+            crs="EPSG:4326"
+        )
+
+        # 2. Selectează doar Coreea de Sud și Coreea de Nord
+        sk = world[world["ADMIN"] == "South Korea"]
+        nk = world[world["ADMIN"] == "North Korea"]
+        coreea = pd.concat([sk, nk])
+        coreea = gpd.GeoDataFrame(coreea, crs=world.crs)
+
+        # 3. Conversie la EPSG:3857 pentru contextily
+        seoul = seoul.to_crs(epsg=3857)
+        coreea_ctx = coreea.to_crs(epsg=3857)
+
+        # 4. Calculează centroizii
+        coreea_ctx["centroid"] = coreea_ctx.geometry.centroid
+
+        # 5. Plot
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        # Colorează Coreea de Sud și Nord diferit
+        coreea_ctx.plot(column='ADMIN', ax=ax, alpha=0.5, edgecolor='black', legend=True)
+
+        # Marchează centroizii cu galben
+        coreea_ctx["centroid"].plot(ax=ax, color="yellow")
+
+        # Marchează Seulul
+        seoul.plot(ax=ax, color='black', marker='*', markersize=100)
+
+        # Fundal hărți reale
+        contextily.add_basemap(ax, crs=coreea_ctx.crs.to_string())
+
+        # Titlu și afișare
+        plt.title('Coreea de Sud, Coreea de Nord și Seul')
+        plt.axis('off')
+        st.pyplot(fig)
+    elif sub_section=="Analiza oraselor Coreei de Sud":
+
+        # 1. Selectăm doar Coreea de Sud
+        south_korea = world[world["ADMIN"] == "South Korea"]
+
+        # 2. Selectăm orașele doar din Coreea de Sud
+        cities_sk = cities[cities["SOV0NAME"] == "Korea, South"]
+
+        # 3. Convertim în EPSG:32652 (metric, pentru Coreea)
+        sk_utm = south_korea.to_crs(epsg=32652)
+        cities_utm = cities_sk.to_crs(epsg=32652)
+
+        # 4. Creăm buffer de 3 km în jurul fiecărui oraș
+        buffers = cities_utm.copy()
+        buffers["geometry"] = cities_utm.buffer(3000)
+
+        # 5. Calculăm zonele din Coreea de Sud care NU sunt în aceste buffers
+        fabrici_potentiale = gpd.overlay(sk_utm, buffers, how='difference')
+
+        # 6. Plot în matplotlib
+        fig, ax = plt.subplots(figsize=(10, 10))
+        fabrici_potentiale.plot(ax=ax, alpha=0.6, edgecolor='black', facecolor='lightgreen')
+        cities_utm.plot(ax=ax, color='red', markersize=10, label='Fabrici')
+        sk_utm.boundary.plot(ax=ax, edgecolor='black')
+
+        # Titlu și afișare
+        ax.set_title("Zone din Coreea de Sud pentru potențiale fabrici (minim 3 km distanță de orașe)")
+        plt.axis('off')
+        plt.legend()
+        st.pyplot(fig)
+
+        ###Distanta orase Coreea de Sud vs Corea de Nord
+        # 1. Selectăm doar orașele din Coreea de Sud
+        cities_sk = cities[cities["SOV0NAME"] == "Korea, South"].to_crs(epsg=4326)
+
+        # 2. Selectăm doar Coreea de Nord
+        north_korea = world[world["ADMIN"] == "North Korea"].to_crs(epsg=4326)
+
+        # 3. Obținem geometria combinată a Coreei de Nord
+        nk_geometry = north_korea.union_all()
+
+        # 4. Calculează distanța de la fiecare oraș la Coreea de Nord
+        results = []
+
+        for idx, city in cities_sk.iterrows():
+            city_point = city.geometry
+            coord_city = (city_point.y, city_point.x)
+
+            # Cel mai apropiat punct de pe granița nord-coreeană
+            _, p_nk = nearest_points(city_point, nk_geometry)
+            coord_nk = (p_nk.y, p_nk.x)
+
+            distance_km = geodesic(coord_city, coord_nk).km
+
+            results.append({
+                "Oraș": city["NAME"],
+                "Distanță până la Coreea de Nord (km)": round(distance_km, 2)
+            })
+
+        # 5. Convertim în DataFrame și sortăm
+        df_distante = pd.DataFrame(results).sort_values(by="Distanță până la Coreea de Nord (km)")
+
+        # 6. Afișăm în Streamlit
+        st.markdown("### Distanța de la fiecare oraș din Coreea de Sud până la granița cu Coreea de Nord")
+        st.dataframe(df_distante, hide_index=True)
+
+    elif sub_section=="GDP Asia":
+        asia = world[world["CONTINENT"] == "Asia"].copy()
+
+        # 3. Încarcă fișierul cu GDP numeric
+        gdp = pd.read_csv("data/asian_gdp_clean.csv")  # asigură-te că se potrivește coloana "Country"
+
+        # 4. Merge între datele geografice și cele economice
+        merged = asia.merge(gdp, left_on="ADMIN", right_on="Country", how="left")
+
+        proj = merged.to_crs(epsg=3035)
+        centroids = proj.geometry.centroid.to_crs(merged.crs)
+
+        # Plot
+        fig, ax = plt.subplots(figsize=(15, 10))
+        merged.plot(color='lightgray', edgecolor='black', ax=ax)
+        merged[merged['GDP_USD'].notna()].plot(column='GDP_USD', cmap='viridis', legend=True,
+                                               ax=ax, edgecolor='black',
+                                               legend_kwds={'label': "GDP (USD)", 'orientation': "horizontal"})
+
+        for x, y, label in zip(centroids.x, centroids.y, proj["ADMIN"]):
+            ax.text(x, y, label, fontsize=7, ha='center', va='center')
+
+        ax.set_title("GDP of Asian Countries")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        plt.tight_layout()
+
+        # Asta e linia corectă în Streamlit
+        st.pyplot(fig)
+
+
+
+
 
 
 
