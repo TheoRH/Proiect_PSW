@@ -16,6 +16,14 @@ from shapely.geometry import Point
 import contextily
 from shapely.ops import nearest_points
 from geopy.distance import geodesic
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import statsmodels.api as sm
+from sklearn.metrics import mean_squared_error
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, roc_auc_score, roc_curve, accuracy_score, \
+    f1_score
 
 
 st.markdown(
@@ -108,7 +116,8 @@ if section == 'Proiect':
 
     sub_section = st.sidebar.radio("Secțiuni din proiect", ["Prezentare date", "Filtrări pe baza datelor", "Tratarea valorilor lipsă și a valorilor extreme", "Metode de codificare a datelor", "Analiza corelațiilor","Metode de scalare a datelor", "Prelucrari statistice și agregare"
                                                             ,"Harta interactiva a distributiei globale a brandurilor de telefoane", "Harta râurilor din Coreea de Sud",
-                                                            "Vecinii Coreei de Sud", "Analiza oraselor Coreei de Sud", "GDP Asia"])
+                                                            "Vecinii Coreei de Sud", "Analiza oraselor Coreei de Sud", "GDP Asia",
+                                                            "Clusterizare KMeans","Regresie logistică","Regresie multiplă"])
 
     if sub_section == "Prezentare date":
         st.markdown('## Prezentare date')
@@ -1073,6 +1082,384 @@ if section == 'Proiect':
 
         # Asta e linia corectă în Streamlit
         st.pyplot(fig)
+
+    elif sub_section == "Clusterizare KMeans":
+
+        st.markdown("## Analiză de tip Clusterizare (KMeans)")
+
+        st.markdown("""
+
+                În această secțiune aplicăm algoritmul **KMeans** pentru a grupa zilele de tranzacționare în funcție de două variabile relevante:
+
+                - `Close` (prețul de închidere)
+
+                - `Volume` (volumul tranzacționat)
+
+
+                Vom folosi setul de date scalat în secțiunile anterioare.
+
+                """)
+
+        # selectare variabile
+
+        try:
+
+            X = df_scaled_model[["Close", "Volume"]].values
+
+        except KeyError:
+
+            st.error("Coloanele 'Close' și 'Volume' nu sunt prezente în setul scalat.")
+
+            st.stop()
+
+        # elbow method - calcul wcss
+
+        wcss = []
+
+        for k in range(1, 11):
+            model = KMeans(n_clusters=k, init='k-means++', random_state=42)
+
+            model.fit(X)
+
+            wcss.append(model.inertia_)
+
+        st.markdown("### Elbow Method – alegerea vizuală a lui k:")
+
+        fig_elbow, ax_elbow = plt.subplots()
+
+        sns.lineplot(x=range(1, 11), y=wcss, marker='o', ax=ax_elbow, color='crimson')
+
+        ax_elbow.set_title("Elbow Method – WCSS în funcție de k")
+
+        ax_elbow.set_xlabel("Numărul de clustere (k)")
+
+        ax_elbow.set_ylabel("WCSS (Within-Cluster Sum of Squares)")
+
+        st.pyplot(fig_elbow)
+
+        # silhouette Score pentru k de la 2 la 10
+
+        silhouette_scores = {}
+
+        for k in range(2, 11):
+            model = KMeans(n_clusters=k, init='k-means++', random_state=42)
+
+            labels = model.fit_predict(X)
+
+            score = silhouette_score(X, labels)
+
+            silhouette_scores[k] = score
+
+        k_optimal = max(silhouette_scores, key=silhouette_scores.get)
+
+        st.markdown("### Silhouette Scores pentru k = 2..10:")
+
+        """
+        Măsoară cât de apropiat este un punct de clusterul său comparativ cu celelalte clustere.
+        Scorul este între -1 și 1:
+
+        ~1 → punctul este bine încadrat
+
+        ~0 → este la graniță între clustere
+
+        < 0 → probabil este pus greșit în cluster"""
+
+        st.table(pd.DataFrame.from_dict(silhouette_scores, orient='index', columns=["Silhouette Score"]).round(4))
+
+        st.success(f" Numărul optim de clustere, conform scorului Silhouette, este: **k = {k_optimal}**")
+
+        # antrenare finala
+
+        model_final = KMeans(n_clusters=k_optimal, init='k-means++', random_state=42)
+
+        cluster_labels = model_final.fit_predict(X)
+
+        silhouette_final = silhouette_score(X, cluster_labels)
+
+        st.markdown(f"### Silhouette Score final: `{silhouette_final:.4f}`")
+
+        # adaugare in df final
+
+        df_final["Cluster"] = cluster_labels
+
+        # scatterplot
+
+        st.markdown("### Vizualizarea clusterelor folosind scatterplot: ")
+
+        fig_clust, ax = plt.subplots(figsize=(10, 6))
+
+        palette = sns.color_palette("Set2", k_optimal)
+
+        for label in range(k_optimal):
+            sns.scatterplot(
+
+                x=X[cluster_labels == label, 0],
+
+                y=X[cluster_labels == label, 1],
+
+                s=50,
+
+                label=f"Cluster {label + 1}",
+
+                ax=ax,
+
+                color=palette[label]
+
+            )
+
+        # centroide
+
+        sns.scatterplot(
+
+            x=model_final.cluster_centers_[:, 0],
+
+            y=model_final.cluster_centers_[:, 1],
+
+            s=200,
+
+            color='red',
+
+            label='Centroide',
+
+            marker='X',
+
+            ax=ax
+
+        )
+
+        ax.set_xlabel("Close (scalat)")
+
+        ax.set_ylabel("Volume (scalat)")
+
+        ax.set_title("Reprezentarea vizuală a clusterelor KMeans")
+
+        ax.grid(True)
+
+        st.pyplot(fig_clust)
+
+        st.markdown("## Interpretarea clusterelor identificate")
+
+        if "Cluster" not in df_final.columns:
+            st.warning("Eticheta de cluster nu este disponibilă. Te rugăm să efectuezi întâi clusterizarea.")
+            st.stop()
+
+        st.markdown("### Număr de observații per cluster")
+        st.dataframe(
+            df_final["Cluster"].value_counts().sort_index().rename_axis("Cluster").reset_index(name="Număr de rânduri"))
+
+        st.markdown("### Statistici descriptive pe fiecare cluster")
+
+        media_pe_cluster = df_final.groupby("Cluster").mean(numeric_only=True).round(2)
+        st.dataframe(media_pe_cluster)
+
+        st.markdown("""
+                    > Valorile afișate mai sus reprezintă mediile variabilelor numerice din fiecare cluster.  
+                    Acestea ne pot ajuta să interpretăm semnificația fiecărui grup:
+                    - Clustere cu `Close` mare și `Volume` mic → zile scumpe cu activitate redusă
+                    - Clustere cu `Volume` mare → zile foarte active, posibil în perioade volatile
+                    """)
+
+        st.markdown("### Vizualizarea primelor 3 rânduri din fiecare cluster")
+        cluster_ids = sorted(df_final["Cluster"].unique())
+
+        for cid in cluster_ids:
+            st.markdown(f"#### Cluster {cid}")
+            exemple = df_final[df_final["Cluster"] == cid].head(3).reset_index(drop=True)
+            st.dataframe(exemple)
+
+        st.markdown("""
+
+                >  Clusterizarea ne ajută să identificăm tipare în comportamentul zilnic de tranzacționare, 
+
+                cum ar fi grupuri cu volum ridicat și preț redus, sau invers.  
+
+                Eticheta de cluster a fost salvată în setul final (`df_final["Cluster"]`).
+
+                """)
+
+
+
+
+    elif sub_section == "Regresie logistică":
+
+        st.markdown("## Regresie Logistică – Predicția trendului pozitiv în următoarele 5 zile")
+
+        st.markdown("""
+
+                Reformulăm problema: prezicem dacă trendul general în următoarele **5 zile** va fi pozitiv.
+
+
+                - `TrendPozitiv_5zile = 1` dacă media `Close` din următoarele 5 zile este mai mare decât prețul de azi
+
+                - `TrendPozitiv_5zile = 0` altfel
+
+
+                """)
+
+        df_trend5 = df_final.copy()
+
+        df_trend5["Return"] = df_trend5["Close"].pct_change()
+
+        df_trend5["MA_3"] = df_trend5["Close"].rolling(3).mean()
+
+        df_trend5["MA_3_diff"] = df_trend5["Close"] - df_trend5["MA_3"]
+
+        df_trend5["Volume_change"] = df_trend5["Volume"].pct_change()
+
+        df_trend5["TrendPozitiv_5zile"] = (
+
+                (df_trend5["Close"].shift(-1) + df_trend5["Close"].shift(-2) +
+
+                 df_trend5["Close"].shift(-3) + df_trend5["Close"].shift(-4) +
+
+                 df_trend5["Close"].shift(-5)) / 5 > df_trend5["Close"]
+
+        ).astype(int)
+
+        df_trend5.dropna(inplace=True)
+
+        st.markdown("### Distribuția clasei țintă `TrendPozitiv_5zile`:")
+
+        distributie = df_trend5["TrendPozitiv_5zile"].value_counts(normalize=True).rename("Proporție (%)") * 100
+
+        st.dataframe(distributie)
+
+        feature_cols = ["Return", "MA_3_diff", "Volume_change", "Luna",
+
+                        "Anotimp_Iarna", "Anotimp_Primavara", "Anotimp_Vara", "Anotimp_Toamna"]
+
+        X = df_trend5[feature_cols]
+
+        y = df_trend5["TrendPozitiv_5zile"]
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        model = LogisticRegression(class_weight='balanced', max_iter=1000)
+
+        model.fit(X_train, y_train)
+
+        y_pred = model.predict(X_test)
+
+        y_prob = model.predict_proba(X_test)[:, 1]
+
+        st.markdown("### Rezultatele modelului:")
+
+        st.write("**Acuratețe:**", f"{accuracy_score(y_test, y_pred):.4f}")
+
+        st.write("**F1 Score:**", f"{f1_score(y_test, y_pred):.4f}")
+
+        st.write("**ROC AUC Score:**", f"{roc_auc_score(y_test, y_prob):.4f}")
+
+        st.markdown("### Matricea de confuzie:")
+
+        cm = confusion_matrix(y_test, y_pred)
+
+        fig_cm, ax_cm = plt.subplots()
+
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax_cm)
+
+        ax_cm.set_xlabel("Valori prezise")
+
+        ax_cm.set_ylabel("Valori reale")
+
+        st.pyplot(fig_cm)
+
+        st.markdown("### Curba ROC:")
+
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+
+        fig_roc, ax_roc = plt.subplots()
+
+        ax_roc.plot(fpr, tpr, label="Logistic Regression", color='blue')
+
+        ax_roc.plot([0, 1], [0, 1], linestyle='--', color='gray', label="Random")
+
+        ax_roc.set_title("Curba ROC – Predicție trend 5 zile")
+
+        ax_roc.set_xlabel("False Positive Rate")
+
+        ax_roc.set_ylabel("True Positive Rate")
+
+        ax_roc.legend()
+
+        st.pyplot(fig_roc)
+
+        st.markdown("### Interpretare:")
+
+        st.success("""
+
+                Modelul logistic aplicat pe `TrendPozitiv_5zile` oferă o performanță modestă, cu un AUC ușor peste 0.5 și o matrice de confuzie echilibrată (~270 predicții corecte pentru fiecare clasă).
+
+                """)
+
+
+
+    elif sub_section == "Regresie multiplă":
+
+        st.markdown("## Regresie Liniară Multiplă")
+
+        st.markdown("""
+
+                Am construit un model de regresie liniară multiplă având ca variabilă dependentă `Close`, iar ca variabile explicative:
+
+                - `Low` – prețul minim al zilei
+
+                - `Volume` – volumul tranzacționat
+
+                - `Luna` – luna calendaristică (pentru surprinderea sezonalității)
+
+
+                """)
+
+        X = df_final[["Low", "Volume", "Luna"]]
+
+        y = df_final["Close"]
+
+        X_const = sm.add_constant(X)
+
+        model = sm.OLS(y, X_const).fit()
+
+        y_pred = model.predict(X_const)
+
+        st.markdown("### Rezumatul modelului:")
+
+        st.text(model.summary())
+
+        rmse = np.sqrt(mean_squared_error(y, y_pred))
+
+        st.markdown(f"**RMSE (Root Mean Squared Error):** `{rmse:.2f}`")
+
+        st.markdown("### Grafic: Valori reale vs. Valori prezise")
+
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+
+        ax.scatter(y, y_pred, alpha=0.5)
+
+        ax.plot([y.min(), y.max()], [y.min(), y.max()], color="red", linestyle="--", linewidth=2)
+
+        ax.set_xlabel("Valori reale (Close)")
+
+        ax.set_ylabel("Valori prezise (Close)")
+
+        ax.set_title("Regresie multiplă: Valori reale vs. prezise")
+
+        st.pyplot(fig)
+
+        st.markdown("### Interpretarea modelului")
+
+        st.success("""
+                Modelul de regresie obținut explică foarte bine variația prețului de închidere (`Close`), având un coeficient de determinare **R² ≈ 0.994**. 
+                Aceasta înseamnă că aproximativ 99,4% din variația prețului `Close` este explicată prin combinația liniară a celor trei predictori aleși:
+
+                - **`Low`** – are o relație aproape perfectă cu `Close`, ceea ce era de așteptat deoarece în piețele bursiere prețul de închidere este, de obicei, apropiat de minimul zilei.
+                - **`Volume`** – are o influență negativă semnificativă, indicând că un volum mare poate semnala vânzări în exces sau corecții.
+                - **`Luna`** – aduce o contribuție pozitivă moderată, surprinzând o posibilă sezonalitate în evoluția prețurilor.
+
+                Cu toate acestea, modelul trebuie interpretat cu precauție din cauza posibilei **multicoliniarități** între variabilele de tip preț (`Open`, `High`, `Low`, `Close`), ceea ce este o realitate structurală în datele financiare.
+                """)
+
 
 
 
