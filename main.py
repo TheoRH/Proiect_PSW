@@ -1431,24 +1431,15 @@ if section == 'Proiect':
 
         st.markdown("### Grafic: Valori reale vs. Valori prezise")
 
-        import matplotlib.pyplot as plt
-
         fig, ax = plt.subplots()
-
         ax.scatter(y, y_pred, alpha=0.5)
-
         ax.plot([y.min(), y.max()], [y.min(), y.max()], color="red", linestyle="--", linewidth=2)
-
         ax.set_xlabel("Valori reale (Close)")
-
         ax.set_ylabel("Valori prezise (Close)")
-
         ax.set_title("Regresie multiplă: Valori reale vs. prezise")
-
         st.pyplot(fig)
 
         st.markdown("### Interpretarea modelului")
-
         st.success("""
                 Modelul de regresie obținut explică foarte bine variația prețului de închidere (`Close`), având un coeficient de determinare **R² ≈ 0.994**. 
                 Aceasta înseamnă că aproximativ 99,4% din variația prețului `Close` este explicată prin combinația liniară a celor trei predictori aleși:
